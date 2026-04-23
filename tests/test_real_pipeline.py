@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from oct_merge_task.tools.real_pipeline import estimate_axis_overlap, run_real_data_pipeline
 
@@ -48,3 +49,29 @@ def test_run_real_data_pipeline_streams_real_inputs_to_bricks(tmp_path: Path) ->
     assert summary["memory_policy"]["loads_full_volume"] is False
     assert (tmp_path / "run" / "stitched_bricks" / "layout.json").exists()
     assert summary["benchmark"]["cache_info"]["disk_reads"] > 0
+
+
+def test_run_real_data_pipeline_reports_memory_budget_and_gpu_registration_mode(tmp_path: Path) -> None:
+    rng = np.random.default_rng(11)
+    world = rng.integers(0, 4096, size=(42, 12, 8), dtype=np.uint16)
+    path_a = tmp_path / "volume_a.npy"
+    path_b = tmp_path / "volume_b.npy"
+    np.save(path_a, world[:24])
+    np.save(path_b, world[21:42])
+
+    summary = run_real_data_pipeline(
+        path_a=path_a,
+        path_b=path_b,
+        output_dir=tmp_path / "run",
+        brick_size=(7, 6, 5),
+        overlap_fraction_range=(0.05, 0.20),
+    )
+
+    assert "memory_budget" in summary
+    assert summary["registration"]["mode"] in {"gpu", "cpu-fallback"}
+    assert summary["registration"]["axis"] == 0
+
+
+def test_estimate_axis_overlap_rejects_non_zero_axis() -> None:
+    with pytest.raises(ValueError, match="axis=0"):
+        estimate_axis_overlap(np.zeros((8, 4, 4), dtype=np.float32), np.zeros((8, 4, 4), dtype=np.float32), axis=1)

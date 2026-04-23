@@ -17,6 +17,8 @@ class GlobalRegistrar:
         axis: int,
         overlap_voxels: int,
     ) -> dict:
+        if axis != 0:
+            raise ValueError("GlobalRegistrar currently supports only axis=0.")
         best_shift_full_res = (0, 0, 0)
         for level in levels:
             record = store_a.get_level_record(level)

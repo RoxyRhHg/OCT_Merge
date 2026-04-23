@@ -61,20 +61,16 @@ def create_real_task_report_bundle(
 
     src_dir = bundle_dir / "src"
     scripts_dir = bundle_dir / "scripts"
-    docs_dir = bundle_dir / "docs"
     report_dir = bundle_dir / "report"
     real_data_dir = bundle_dir / "real_data"
-    for path in (src_dir, scripts_dir, docs_dir, report_dir, real_data_dir):
+    for path in (src_dir, scripts_dir, report_dir, real_data_dir):
         path.mkdir(parents=True, exist_ok=True)
 
     shutil.copytree(project_root / "src" / "oct_merge_task", src_dir / "oct_merge_task", dirs_exist_ok=True)
     for script_name in ("read_input_volume.py", "display_real_data.py", "run_real_pipeline.py"):
         shutil.copy2(project_root / "scripts" / script_name, scripts_dir / script_name)
 
-    _write_text(bundle_dir / "README_汇报说明.txt", _real_task_readme_text())
-    _write_text(docs_dir / "工程方案摘要.md", _engineering_summary_text())
-    _write_text(docs_dir / "运行命令.md", _run_commands_text())
-    _write_text(docs_dir / "汇报检查清单.md", _presentation_checklist_text())
+    _write_text(bundle_dir / "README.txt", _minimal_real_task_readme_text())
     _write_text(report_dir / "index.html", _report_index_html_text())
     _write_text(real_data_dir / "README.txt", _real_data_readme_text())
     _write_text(scripts_dir / "open_report.bat", _open_report_bat_text())
@@ -89,7 +85,6 @@ def create_real_task_report_bundle(
         "bundle_dir": str(bundle_dir),
         "src_dir": str(src_dir),
         "scripts_dir": str(scripts_dir),
-        "docs_dir": str(docs_dir),
         "report_dir": str(report_dir),
         "real_data_dir": str(real_data_dir),
         "includes_smoke_data": bool(include_smoke_data),
@@ -128,7 +123,7 @@ def _real_task_readme_text() -> str:
 2. 输入体数据不默认整块转 float32。`.npy` 和 `.raw` 使用 memmap，`.tif/.tiff` 使用 tifffile memmap。
 3. 拼接输出按 brick 流式写盘，不创建完整 stitched float32 体。
 4. benchmark 会真实读取 stitched bricks 并组装切片，报告 disk_reads、mean_slice_ms、estimated_fps。
-5. 当前第一阶段以 axis=0 平移配准为主，为后续 GPU 配准、局部形变和 30 Hz 渲染器保留接口。
+5. 当前第一阶段以 axis=0 平移配准为主，已经补上显存规划器和 GPU-ready 全局配准接口，并保留 CPU fallback。
 
 ## 快速运行
 
@@ -146,6 +141,38 @@ def _real_task_readme_text() -> str:
 """
 
 
+def _minimal_real_task_readme_text() -> str:
+    return """OCT 真实任务汇报包
+
+这个文件夹用于直接演示真实任务主流程。
+
+包含内容：
+- src\\ : 核心源码
+- real_data\\ : 放真实 A/B 数据
+- scripts\\ : 读取输入、运行真实 pipeline、烟测、打开汇报页
+- report\\ : 交互式汇报页
+- smoke_data\\ : 自带小型演示输入
+- smoke_run\\ : 可直接展示的运行结果
+
+当前能力：
+- overlap 不是固定先验，默认在 5% 到 20% 范围估计
+- 输入通过 memmap 读取，不默认整块转 float32
+- 输出按 brick 流式写盘
+- 已加入 MemoryPlanner 和 GPU-ready 全局配准接口
+- 当前可 CPU fallback
+
+运行方式：
+1. 打开汇报页：scripts\\open_report.bat
+2. 烟测：scripts\\run_smoke_test.bat
+3. 真实数据运行：
+   python scripts\\run_real_pipeline.py --volume-a real_data\\volume_a.npy --volume-b real_data\\volume_b.npy --output-dir real_run
+
+当前边界：
+- 第一阶段只支持 axis=0 平移配准
+- GPU 局部精修、GPU 融合优化和最终 30Hz 渲染器仍在后续阶段
+"""
+
+
 def _engineering_summary_text() -> str:
     return """# 工程方案摘要
 
@@ -159,9 +186,11 @@ def _engineering_summary_text() -> str:
 ## 当前实现
 
 1. `VolumeSource` 以 memmap 方式打开输入体，提供 `read_region` 分块读取接口。
-2. `estimate_axis_overlap` 在给定 overlap 范围内用 NCC 搜索实际重叠长度。
-3. `StreamingBrickStitcher` 按输出 brick 读取 A/B 对应区域并融合写盘。
-4. `benchmark_brick_store_slices` 真实读取 brick 组装切片，不再使用空循环估算 FPS。
+2. `MemoryPlanner` 根据 48GB 预算规划安全 slab 形状。
+3. `estimate_axis_overlap` 在给定 overlap 范围内用 NCC 搜索实际重叠长度。
+4. `GPUGlobalRegistrar` 已提供 GPU-ready 的全局配准接口，当前支持 axis=0 平移，并可 CPU fallback。
+5. `StreamingBrickStitcher` 按输出 brick 读取 A/B 对应区域并融合写盘。
+6. `benchmark_brick_store_slices` 真实读取 brick 组装切片，不再使用空循环估算 FPS。
 
 ## 当前边界
 
@@ -179,10 +208,12 @@ def _presentation_checklist_text() -> str:
 - 明确任务规模：`3000 x 1500 x 2000`，单 float32 体约 36GB。
 - 强调两个体不能同时完整放入 48GB GPU 显存。
 - 说明 overlap 约 10%，但不是固定先验，工程上需要估计。
+- 说明当前已经开始把主干向 GPU 模块推进，不是只停留在 CPU demo。
 
 ## 已完成内容
 
 - 输入通过 memmap 分块读取。
+- 已有 `MemoryPlanner` 和 GPU-ready 全局配准接口。
 - overlap 在范围内估计，不硬编码为 10%。
 - 输出按 brick 流式写盘。
 - benchmark 真实读取 bricks 组装切片。
@@ -258,7 +289,7 @@ def _report_index_html_text() -> str:
   <main>
     <div class="hero">
       <h1>OCT 三维体真实拼接任务</h1>
-      <p>目标不是继续演示小 demo，而是处理真实工程约束：大体数据、48GB 显存预算、overlap 非固定先验、按 brick 流式输出，以及可复现实测 benchmark。</p>
+      <p>目标不是继续演示小 demo，而是处理真实工程约束：大体数据、48GB 显存预算、overlap 非固定先验、按 brick 流式输出，以及可复现实测 benchmark。当前已经补上显存规划器和 GPU-ready 全局配准主干。</p>
       <div class="grid">
         <div class="card"><div class="metric">36GB</div><p>单个 `3000 x 1500 x 2000` float32 体约占用。</p></div>
         <div class="card"><div class="metric">48GB</div><p>目标单卡显存预算，不能容纳两个完整 float32 体和输出。</p></div>
@@ -266,8 +297,8 @@ def _report_index_html_text() -> str:
       </div>
     </div>
     <section class="grid">
-      <div class="card"><h2>内存策略</h2><p>输入体用 memmap 分块读取，融合阶段按输出 brick 拉取局部区域，不创建完整 stitched float32 体。</p></div>
-      <div class="card"><h2>Overlap 估计</h2><p>默认在 5% 到 20% 范围内低分辨搜索，使用 NCC 估计 axis=0 平移重叠。</p></div>
+      <div class="card"><h2>内存策略</h2><p>输入体用 memmap 分块读取，新增 MemoryPlanner 按 48GB 预算规划 slab，融合阶段按输出 brick 拉取局部区域，不创建完整 stitched float32 体。</p></div>
+      <div class="card"><h2>配准主干</h2><p>默认在 5% 到 20% 范围内低分辨搜索 overlap，并已补上 GPU-ready 的 axis=0 全局配准接口，当前可 CPU fallback。</p></div>
       <div class="card"><h2>真实 Benchmark</h2><p>benchmark 会实际读取 stitched bricks 并组装切片，报告 disk_reads、mean_slice_ms、estimated_fps。</p></div>
     </section>
     <section class="card">
@@ -280,7 +311,7 @@ def _report_index_html_text() -> str:
     <section class="card">
       <h2>当前边界</h2>
       <ul>
-        <li>第一阶段实现 axis=0 平移配准和 streaming brick fusion。</li>
+        <li>第一阶段实现 axis=0 平移配准、MemoryPlanner 和 streaming brick fusion。</li>
         <li>旋转、尺度误差、非刚性形变、GPU kernel 与最终 30 Hz 渲染器是下一阶段。</li>
         <li>当前 FPS 是 I/O 与切片组装基线，不等同于最终显示帧率。</li>
       </ul>

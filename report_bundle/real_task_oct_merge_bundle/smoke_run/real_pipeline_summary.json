@@ -47,12 +47,27 @@
       1
     ]
   },
+  "memory_budget": {
+    "max_gpu_bytes": 42949672960,
+    "planned_slab_shape": [
+      24,
+      12,
+      8
+    ],
+    "planned_slab_bytes": 27648
+  },
+  "registration": {
+    "mode": "cpu-fallback",
+    "axis": 0,
+    "preview_overlap_voxels": 3,
+    "preview_score": 1.0
+  },
   "benchmark": {
     "axis": 2,
     "passes": 1,
     "num_slices": 8,
-    "mean_slice_ms": 4.537187500000012,
-    "estimated_fps": 220.40085405330885,
+    "mean_slice_ms": 4.180324999999998,
+    "estimated_fps": 239.21585044225043,
     "cache_info": {
       "cache_size": 0,
       "resident_bricks": 0,

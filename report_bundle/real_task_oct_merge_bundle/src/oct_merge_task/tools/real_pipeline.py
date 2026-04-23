@@ -7,7 +7,9 @@ from typing import Optional, Sequence, Tuple
 import numpy as np
 
 from oct_merge_task.fusion.brick_store import DiskBackedBrickStore
+from oct_merge_task.gpu.memory_planner import MemoryBudget
 from oct_merge_task.io.volume_source import VolumeSource, open_volume_source
+from oct_merge_task.registration.gpu_global_registrar import GPUGlobalRegistrar
 from oct_merge_task.registration.similarity import normalized_cross_correlation
 from oct_merge_task.tools.slice_benchmark import benchmark_brick_store_slices
 
@@ -57,10 +59,19 @@ def run_real_data_pipeline(
     brick_size: Index3 = (128, 128, 128),
     overlap_fraction_range: Tuple[float, float] = (0.05, 0.20),
     preview_stride: Index3 = (8, 8, 8),
+    max_gpu_bytes: int = 40 * (1024**3),
+    registration_device: str = "cpu",
 ) -> dict:
     source_a = open_volume_source(path_a, shape=shape_a, dtype=dtype_a)
     source_b = open_volume_source(path_b, shape=shape_b, dtype=dtype_b)
     _validate_sources(source_a, source_b)
+    memory_budget = MemoryBudget(
+        max_gpu_bytes=max_gpu_bytes,
+        bytes_per_voxel=max(source_a.dtype.itemsize, source_b.dtype.itemsize, 4),
+        num_live_volumes=2.0,
+        temp_buffer_factor=1.5,
+    )
+    slab_shape = memory_budget.max_slab_shape(source_a.shape)
 
     effective_preview_stride = _effective_preview_stride(source_a, source_b, preview_stride)
     preview_a = _read_preview(source_a, effective_preview_stride)
@@ -73,6 +84,11 @@ def run_real_data_pipeline(
     )
     estimated_overlap = max(1, int(round(preview_estimate["overlap_voxels"] * effective_preview_stride[0])))
     estimated_overlap = min(estimated_overlap, source_a.shape[0], source_b.shape[0])
+    registration = GPUGlobalRegistrar(device=registration_device).estimate_translation(
+        preview_a,
+        preview_b,
+        overlap_voxels=max(1, preview_estimate["overlap_voxels"]),
+    )
     transform = {
         "tx": int(source_a.shape[0] - estimated_overlap),
         "ty": 0,
@@ -80,7 +96,7 @@ def run_real_data_pipeline(
         "rx": 0.0,
         "ry": 0.0,
         "rz": 0.0,
-        "score": float(preview_estimate["score"]),
+        "score": float(registration["score"]),
     }
 
     output_path = Path(output_dir)
@@ -109,6 +125,17 @@ def run_real_data_pipeline(
             "source_access": "memmap",
             "fusion": "streaming_bricks",
             "preview_stride": list(effective_preview_stride),
+        },
+        "memory_budget": {
+            "max_gpu_bytes": int(memory_budget.max_gpu_bytes),
+            "planned_slab_shape": list(slab_shape),
+            "planned_slab_bytes": int(memory_budget.estimate_bytes_for_shape(slab_shape)),
+        },
+        "registration": {
+            "mode": registration["mode"],
+            "axis": registration["axis"],
+            "preview_overlap_voxels": int(preview_estimate["overlap_voxels"]),
+            "preview_score": float(preview_estimate["score"]),
         },
         "benchmark": benchmark,
         "output_dir": str(output_path),
