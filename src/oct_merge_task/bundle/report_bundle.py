@@ -159,7 +159,7 @@ def _minimal_real_task_readme_text() -> str:
 - 输入通过 memmap 读取，不默认整块转 float32
 - 输出按 brick 流式写盘
 - 已加入 MemoryPlanner 和 GPU-ready 全局配准接口
-- 当前可 CPU fallback
+- 当前支持 torch FFT 的 CUDA 全局配准，并保留 CPU fallback
 
 运行方式：
 1. 打开汇报页：scripts\\open_report.bat
@@ -289,7 +289,7 @@ def _report_index_html_text() -> str:
   <main>
     <div class="hero">
       <h1>OCT 三维体真实拼接任务</h1>
-      <p>目标不是继续演示小 demo，而是处理真实工程约束：大体数据、48GB 显存预算、overlap 非固定先验、按 brick 流式输出，以及可复现实测 benchmark。当前已经补上显存规划器和 GPU-ready 全局配准主干。</p>
+      <p>目标不是继续演示小 demo，而是处理真实工程约束：大体数据、48GB 显存预算、overlap 非固定先验、按 brick 流式输出，以及可复现实测 benchmark。当前已经补上显存规划器，并在本机 CUDA 环境下跑通了 torch FFT 全局配准主干。</p>
       <div class="grid">
         <div class="card"><div class="metric">36GB</div><p>单个 `3000 x 1500 x 2000` float32 体约占用。</p></div>
         <div class="card"><div class="metric">48GB</div><p>目标单卡显存预算，不能容纳两个完整 float32 体和输出。</p></div>
@@ -298,7 +298,7 @@ def _report_index_html_text() -> str:
     </div>
     <section class="grid">
       <div class="card"><h2>内存策略</h2><p>输入体用 memmap 分块读取，新增 MemoryPlanner 按 48GB 预算规划 slab，融合阶段按输出 brick 拉取局部区域，不创建完整 stitched float32 体。</p></div>
-      <div class="card"><h2>配准主干</h2><p>默认在 5% 到 20% 范围内低分辨搜索 overlap，并已补上 GPU-ready 的 axis=0 全局配准接口，当前可 CPU fallback。</p></div>
+      <div class="card"><h2>配准主干</h2><p>默认在 5% 到 20% 范围内低分辨搜索 overlap，并已补上基于 torch FFT 的 axis=0 全局配准接口。在本机的 CUDA 环境中已验证可运行，同时保留 CPU fallback。</p></div>
       <div class="card"><h2>真实 Benchmark</h2><p>benchmark 会实际读取 stitched bricks 并组装切片，报告 disk_reads、mean_slice_ms、estimated_fps。</p></div>
     </section>
     <section class="card">
@@ -311,7 +311,7 @@ def _report_index_html_text() -> str:
     <section class="card">
       <h2>当前边界</h2>
       <ul>
-        <li>第一阶段实现 axis=0 平移配准、MemoryPlanner 和 streaming brick fusion。</li>
+        <li>第一阶段实现 axis=0 平移配准、MemoryPlanner、torch FFT 全局配准主干和 streaming brick fusion。</li>
         <li>旋转、尺度误差、非刚性形变、GPU kernel 与最终 30 Hz 渲染器是下一阶段。</li>
         <li>当前 FPS 是 I/O 与切片组装基线，不等同于最终显示帧率。</li>
       </ul>

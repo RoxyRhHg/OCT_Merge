@@ -15,7 +15,7 @@ OCT 真实任务汇报包
 - 输入通过 memmap 读取，不默认整块转 float32
 - 输出按 brick 流式写盘
 - 已加入 MemoryPlanner 和 GPU-ready 全局配准接口
-- 当前可 CPU fallback
+- 当前支持 torch FFT 的 CUDA 全局配准，并保留 CPU fallback
 
 运行方式：
 1. 打开汇报页：scripts\open_report.bat

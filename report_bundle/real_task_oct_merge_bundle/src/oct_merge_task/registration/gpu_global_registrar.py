@@ -50,8 +50,10 @@ class GPUGlobalRegistrar:
         try:
             import torch
 
-            tensor_a = torch.as_tensor(a, dtype=torch.float32)
-            tensor_b = torch.as_tensor(b, dtype=torch.float32)
+            if not torch.cuda.is_available():
+                return self._normalized_cross_correlation(a, b), "cpu-fallback"
+            tensor_a = torch.as_tensor(a, dtype=torch.float32, device="cuda")
+            tensor_b = torch.as_tensor(b, dtype=torch.float32, device="cuda")
             fa = torch.fft.rfftn(tensor_a)
             fb = torch.fft.rfftn(tensor_b)
             cross = fa * torch.conj(fb)
