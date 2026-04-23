@@ -70,6 +70,8 @@ def test_run_real_data_pipeline_reports_memory_budget_and_gpu_registration_mode(
     assert "memory_budget" in summary
     assert summary["registration"]["mode"] in {"gpu", "cpu-fallback"}
     assert summary["registration"]["axis"] == 0
+    assert summary["fusion"]["mode"] in {"torch-cpu", "torch-cuda", "numpy-fallback"}
+    assert summary["fusion"]["axis"] == 0
 
 
 def test_estimate_axis_overlap_rejects_non_zero_axis() -> None:

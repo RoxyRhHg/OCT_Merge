@@ -61,6 +61,7 @@ def run_real_data_pipeline(
     preview_stride: Index3 = (8, 8, 8),
     max_gpu_bytes: int = 40 * (1024**3),
     registration_device: str = "cpu",
+    fusion_device: str = "cpu",
 ) -> dict:
     source_a = open_volume_source(path_a, shape=shape_a, dtype=dtype_a)
     source_b = open_volume_source(path_b, shape=shape_b, dtype=dtype_b)
@@ -101,7 +102,8 @@ def run_real_data_pipeline(
 
     output_path = Path(output_dir)
     brick_store_dir = output_path / "stitched_bricks"
-    brick_result = StreamingBrickStitcher(brick_size=brick_size).stitch_to_bricks(
+    stitcher = StreamingBrickStitcher(brick_size=brick_size, device=fusion_device)
+    brick_result = stitcher.stitch_to_bricks(
         source_a=source_a,
         source_b=source_b,
         tx=int(transform["tx"]),
@@ -137,6 +139,10 @@ def run_real_data_pipeline(
             "preview_overlap_voxels": int(preview_estimate["overlap_voxels"]),
             "preview_score": float(preview_estimate["score"]),
         },
+        "fusion": {
+            "mode": stitcher.fusion_mode,
+            "axis": 0,
+        },
         "benchmark": benchmark,
         "output_dir": str(output_path),
     }
@@ -149,8 +155,10 @@ def run_real_data_pipeline(
 
 
 class StreamingBrickStitcher:
-    def __init__(self, brick_size: Index3 = (128, 128, 128)) -> None:
+    def __init__(self, brick_size: Index3 = (128, 128, 128), device: str = "cpu") -> None:
         self.brick_size = tuple(int(v) for v in brick_size)
+        self.device = device
+        self.fusion_mode = "numpy-fallback"
 
     def stitch_to_bricks(
         self,
@@ -184,13 +192,38 @@ class StreamingBrickStitcher:
         accum = np.zeros(shape, dtype=np.float32)
         weight = np.zeros(shape, dtype=np.float32)
 
-        _accumulate_source(accum, weight, source_a, origin, shape, source_offset=(0, 0, 0))
-        _accumulate_source(accum, weight, source_b, origin, shape, source_offset=(tx, 0, 0))
+        region_a, mask_a = _read_source_region(source_a, origin, shape, source_offset=(0, 0, 0))
+        region_b, mask_b = _read_source_region(source_b, origin, shape, source_offset=(tx, 0, 0))
+        return self._fuse_regions(region_a, mask_a, region_b, mask_b)
 
-        valid = weight > 0.0
-        brick = np.zeros(shape, dtype=np.float32)
-        brick[valid] = accum[valid] / weight[valid]
-        return brick
+    def _fuse_regions(
+        self,
+        region_a: np.ndarray,
+        mask_a: np.ndarray,
+        region_b: np.ndarray,
+        mask_b: np.ndarray,
+    ) -> np.ndarray:
+        try:
+            import torch
+
+            target_device = "cuda" if self.device == "cuda" and torch.cuda.is_available() else "cpu"
+            tensor_a = torch.as_tensor(region_a, dtype=torch.float32, device=target_device)
+            tensor_b = torch.as_tensor(region_b, dtype=torch.float32, device=target_device)
+            tensor_mask_a = torch.as_tensor(mask_a, dtype=torch.float32, device=target_device)
+            tensor_mask_b = torch.as_tensor(mask_b, dtype=torch.float32, device=target_device)
+            accum = tensor_a * tensor_mask_a + tensor_b * tensor_mask_b
+            weight = tensor_mask_a + tensor_mask_b
+            brick = torch.where(weight > 0.0, accum / torch.clamp(weight, min=1.0), torch.zeros_like(accum))
+            self.fusion_mode = "torch-cuda" if target_device == "cuda" else "torch-cpu"
+            return brick.detach().cpu().numpy().astype(np.float32)
+        except Exception:
+            accum = region_a * mask_a.astype(np.float32) + region_b * mask_b.astype(np.float32)
+            weight = mask_a.astype(np.float32) + mask_b.astype(np.float32)
+            brick = np.zeros(region_a.shape, dtype=np.float32)
+            valid = weight > 0.0
+            brick[valid] = accum[valid] / weight[valid]
+            self.fusion_mode = "numpy-fallback"
+            return brick
 
 
 def _validate_sources(source_a: VolumeSource, source_b: VolumeSource) -> None:
@@ -237,14 +270,14 @@ def _build_tasks(output_shape: Index3, brick_size: Index3) -> list[dict]:
     return tasks
 
 
-def _accumulate_source(
-    accum: np.ndarray,
-    weight: np.ndarray,
+def _read_source_region(
     source: VolumeSource,
     output_origin: Index3,
     output_shape: Index3,
     source_offset: Index3,
-) -> None:
+) -> tuple[np.ndarray, np.ndarray]:
+    region = np.zeros(output_shape, dtype=np.float32)
+    mask = np.zeros(output_shape, dtype=bool)
     output_start = np.array(output_origin, dtype=np.int64)
     output_stop = output_start + np.array(output_shape, dtype=np.int64)
     source_start = np.array(source_offset, dtype=np.int64)
@@ -253,7 +286,7 @@ def _accumulate_source(
     inter_start = np.maximum(output_start, source_start)
     inter_stop = np.minimum(output_stop, source_stop)
     if np.any(inter_stop <= inter_start):
-        return
+        return region, mask
 
     out_local_start = inter_start - output_start
     out_local_stop = inter_stop - output_start
@@ -264,5 +297,6 @@ def _accumulate_source(
         tuple(int(v) for v in region_shape),
     ).astype(np.float32)
     slices = tuple(slice(int(a), int(b)) for a, b in zip(out_local_start, out_local_stop))
-    accum[slices] += data
-    weight[slices] += 1.0
+    region[slices] = data
+    mask[slices] = True
+    return region, mask

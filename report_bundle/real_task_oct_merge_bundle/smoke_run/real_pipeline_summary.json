@@ -1,0 +1,82 @@
+{
+  "shape_a": [
+    24,
+    12,
+    8
+  ],
+  "shape_b": [
+    21,
+    12,
+    8
+  ],
+  "dtype_a": "uint16",
+  "dtype_b": "uint16",
+  "estimated_overlap_voxels": 3,
+  "estimated_overlap_fraction": 0.125,
+  "overlap_fraction_range": [
+    0.05,
+    0.2
+  ],
+  "estimated_transform": {
+    "tx": 21,
+    "ty": 0,
+    "tz": 0,
+    "rx": 0.0,
+    "ry": 0.0,
+    "rz": 0.0,
+    "score": 1.0
+  },
+  "stitched_shape": [
+    42,
+    12,
+    8
+  ],
+  "brick_count": 24,
+  "brick_size": [
+    7,
+    6,
+    5
+  ],
+  "memory_policy": {
+    "loads_full_volume": false,
+    "source_access": "memmap",
+    "fusion": "streaming_bricks",
+    "preview_stride": [
+      1,
+      1,
+      1
+    ]
+  },
+  "memory_budget": {
+    "max_gpu_bytes": 42949672960,
+    "planned_slab_shape": [
+      24,
+      12,
+      8
+    ],
+    "planned_slab_bytes": 27648
+  },
+  "registration": {
+    "mode": "cpu-fallback",
+    "axis": 0,
+    "preview_overlap_voxels": 3,
+    "preview_score": 1.0
+  },
+  "fusion": {
+    "mode": "torch-cpu",
+    "axis": 0
+  },
+  "benchmark": {
+    "axis": 2,
+    "passes": 1,
+    "num_slices": 8,
+    "mean_slice_ms": 7.815512499999954,
+    "estimated_fps": 127.95066222464692,
+    "cache_info": {
+      "cache_size": 0,
+      "resident_bricks": 0,
+      "disk_reads": 96
+    }
+  },
+  "output_dir": "E:\\Coding\\OCT Merge Task\\report_bundle\\real_task_oct_merge_bundle\\smoke_run"
+}

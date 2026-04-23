@@ -6,6 +6,9 @@ from pathlib import Path
 
 import numpy as np
 
+from oct_merge_task.fusion.brick_store import DiskBackedBrickStore
+from oct_merge_task.tools.real_pipeline import run_real_data_pipeline
+
 
 def create_report_bundle(
     project_root: str | Path,
@@ -71,14 +74,26 @@ def create_real_task_report_bundle(
         shutil.copy2(project_root / "scripts" / script_name, scripts_dir / script_name)
 
     _write_text(bundle_dir / "README.txt", _minimal_real_task_readme_text())
-    _write_text(report_dir / "index.html", _report_index_html_text())
+    _write_text(report_dir / "index.html", render_report_index_html())
     _write_text(real_data_dir / "README.txt", _real_data_readme_text())
     _write_text(scripts_dir / "open_report.bat", _open_report_bat_text())
     _write_text(scripts_dir / "run_smoke_test.bat", _run_smoke_test_bat_text())
 
     smoke_data_dir = bundle_dir / "smoke_data"
+    report_payload = None
     if include_smoke_data:
         _write_smoke_data(smoke_data_dir)
+        run_real_data_pipeline(
+            path_a=smoke_data_dir / "volume_a.npy",
+            path_b=smoke_data_dir / "volume_b.npy",
+            output_dir=bundle_dir / "smoke_run",
+            brick_size=(7, 6, 5),
+            overlap_fraction_range=(0.05, 0.20),
+        )
+        report_payload = _build_smoke_report_payload(bundle_dir / "smoke_run")
+        _write_text(report_dir / "payload.json", json.dumps(report_payload, indent=2, ensure_ascii=False))
+
+    _write_text(report_dir / "index.html", render_report_index_html(report_payload))
 
     manifest = {
         "bundle_type": "real_task_oct_merge",
@@ -110,6 +125,145 @@ def _write_smoke_data(smoke_data_dir: Path) -> None:
     world = rng.integers(0, 4096, size=(42, 12, 8), dtype=np.uint16)
     np.save(smoke_data_dir / "volume_a.npy", world[:24])
     np.save(smoke_data_dir / "volume_b.npy", world[21:42])
+
+
+def _build_smoke_report_payload(smoke_run_dir: Path) -> dict:
+    summary = json.loads((smoke_run_dir / "real_pipeline_summary.json").read_text(encoding="utf-8"))
+    store = DiskBackedBrickStore(smoke_run_dir / "stitched_bricks")
+    layout = store.read_layout()
+    smoke_data_dir = smoke_run_dir.parent / "smoke_data"
+    volume_a = np.load(smoke_data_dir / "volume_a.npy").astype(np.float32)
+    volume_b = np.load(smoke_data_dir / "volume_b.npy").astype(np.float32)
+    slices = []
+    for z_index in range(int(layout["output_shape"][2])):
+        plane = _read_axial_slice(store, layout, z_index)
+        slices.append(_encode_plane(plane))
+    return {
+        "summary": summary,
+        "slices": slices,
+        "point_clouds": {
+            "volume_a": _build_volume_point_cloud(volume_a, "Volume A", "#51d6ff"),
+            "volume_b": _build_volume_point_cloud(volume_b, "Volume B", "#ff9a4d"),
+            "stitched": _build_stitched_point_cloud(store, layout, volume_a, volume_b, int(summary["estimated_transform"]["tx"])),
+        },
+    }
+
+
+def build_report_payload_from_smoke_run(smoke_run_dir: Path) -> dict:
+    return _build_smoke_report_payload(Path(smoke_run_dir))
+
+
+def _read_axial_slice(store: DiskBackedBrickStore, layout: dict, z_index: int) -> np.ndarray:
+    output_shape = layout["output_shape"]
+    plane = np.zeros((output_shape[0], output_shape[1]), dtype=np.float32)
+    for task in layout["tasks"]:
+        origin = task["origin"]
+        shape = task["shape"]
+        if not (origin[2] <= z_index < origin[2] + shape[2]):
+            continue
+        brick_id = tuple(int(v) for v in task["brick_id"])
+        brick = store.read_brick(brick_id)
+        local_index = z_index - origin[2]
+        plane[
+            origin[0] : origin[0] + shape[0],
+            origin[1] : origin[1] + shape[1],
+        ] = brick[:, :, local_index]
+    return plane
+
+
+def _encode_plane(plane: np.ndarray) -> dict:
+    normalized = np.asarray(plane, dtype=np.float32)
+    normalized = normalized - float(normalized.min())
+    max_value = float(normalized.max())
+    if max_value > 0.0:
+        normalized = normalized / max_value
+    image = (normalized * 255.0).astype(np.uint8)
+    return {
+        "shape": list(image.shape),
+        "data": image.flatten().tolist(),
+    }
+
+
+def _build_volume_point_cloud(volume: np.ndarray, name: str, base_color: str) -> dict:
+    coords = np.argwhere(volume >= np.percentile(volume, 82))
+    values = volume[coords[:, 0], coords[:, 1], coords[:, 2]] if len(coords) else np.array([], dtype=np.float32)
+    labels = []
+    legend = [
+        {"label": "Low Response", "color": "#2a6f97"},
+        {"label": "Medium Response", "color": base_color},
+        {"label": "High Response", "color": "#ffe66d"},
+    ]
+    for value in values:
+        if value < np.percentile(values, 35) if len(values) else 0.0:
+            labels.append("Low Response")
+        elif value < np.percentile(values, 70) if len(values) else 0.0:
+            labels.append("Medium Response")
+        else:
+            labels.append("High Response")
+    if len(coords) > 12000:
+        order = np.argsort(values)[-12000:]
+        coords = coords[order]
+        values = values[order]
+        labels = [labels[i] for i in order]
+    return {
+        "name": name,
+        "legend": legend,
+        "count": int(len(coords)),
+        "points": coords.tolist(),
+        "values": values.tolist(),
+        "labels": labels,
+        "shape": list(volume.shape),
+        "color": base_color,
+    }
+
+
+def _build_stitched_point_cloud(
+    store: DiskBackedBrickStore,
+    layout: dict,
+    volume_a: np.ndarray,
+    volume_b: np.ndarray,
+    tx: int,
+) -> dict:
+    points = []
+    values = []
+    labels = []
+    threshold = 0.35
+    for task in layout["tasks"]:
+        brick_id = tuple(int(v) for v in task["brick_id"])
+        brick = store.read_brick(brick_id)
+        coords = np.argwhere(brick >= threshold * max(1.0, float(brick.max())))
+        origin = np.array(task["origin"], dtype=np.int32)
+        for coord in coords:
+            point = coord + origin
+            points.append(point.tolist())
+            values.append(float(brick[tuple(coord)]))
+            in_a = point[0] < volume_a.shape[0] and point[1] < volume_a.shape[1] and point[2] < volume_a.shape[2]
+            in_b = tx <= point[0] < tx + volume_b.shape[0] and point[1] < volume_b.shape[1] and point[2] < volume_b.shape[2]
+            if in_a and in_b:
+                labels.append("Overlap")
+            elif in_a:
+                labels.append("A-only")
+            else:
+                labels.append("B-only")
+    if len(points) > 12000:
+        order = np.argsort(values)[-12000:]
+        points = [points[i] for i in order]
+        values = [values[i] for i in order]
+        labels = [labels[i] for i in order]
+    return {
+        "name": "Stitched",
+        "legend": [
+            {"label": "A-only", "color": "#51d6ff"},
+            {"label": "B-only", "color": "#ff9a4d"},
+            {"label": "Overlap", "color": "#f6ff7e"},
+        ],
+        "count": len(points),
+        "points": points,
+        "values": values,
+        "labels": labels,
+        "shape": layout["output_shape"],
+        "color": "#7bf0b2",
+    }
 
 
 def _real_task_readme_text() -> str:
@@ -154,22 +308,35 @@ def _minimal_real_task_readme_text() -> str:
 - smoke_data\\ : 自带小型演示输入
 - smoke_run\\ : 可直接展示的运行结果
 
-当前能力：
-- overlap 不是固定先验，默认在 5% 到 20% 范围估计
-- 输入通过 memmap 读取，不默认整块转 float32
-- 输出按 brick 流式写盘
-- 已加入 MemoryPlanner 和 GPU-ready 全局配准接口
-- 当前支持 torch FFT 的 CUDA 全局配准，并保留 CPU fallback
+当前算法实现思路：
+1. 输入层：
+   真实数据通过 memmap 方式读取，不默认整块转 float32，避免两个大体数据一次性占满内存或显存。
+2. overlap 估计：
+   overlap 不当作固定先验，默认在 5% 到 20% 范围内搜索，用低分辨 preview 上的相关性估计实际重叠长度。
+3. 显存规划：
+   已加入 MemoryPlanner，根据 48GB 预算规划 slab 形状，后续 GPU 主干会按 slab/brick 方式推进，而不是整块送入显存。
+4. 全局配准：
+   当前第一阶段以 axis=0 平移配准为主，已经补上基于 torch FFT 的 CUDA 全局配准接口，并保留 CPU fallback。
+5. 主干融合：
+   拼接输出按 brick 流式写盘，避免创建完整 stitched float32 体；当前融合主干已支持 torch-aware 路径。
+6. 结果输出：
+   benchmark 会真实读取 stitched bricks 并组装切片，输出 overlap、brick_count、disk_reads、mean_slice_ms、estimated_fps 等指标。
 
-运行方式：
-1. 打开汇报页：scripts\\open_report.bat
-2. 烟测：scripts\\run_smoke_test.bat
-3. 真实数据运行：
+该文件夹的使用方式：
+1. 直接打开图形化页面：
+   scripts\\open_report.bat
+2. 如果要快速演示现成结果：
+   直接查看 report\\index.html 和 smoke_run\\real_pipeline_summary.json
+3. 如果要重新跑自带烟测数据：
+   scripts\\run_smoke_test.bat
+4. 如果要换成真实数据：
+   把 A/B 数据放进 real_data\\
+5. 运行真实数据主流程：
    python scripts\\run_real_pipeline.py --volume-a real_data\\volume_a.npy --volume-b real_data\\volume_b.npy --output-dir real_run
-
-当前边界：
-- 第一阶段只支持 axis=0 平移配准
-- GPU 局部精修、GPU 融合优化和最终 30Hz 渲染器仍在后续阶段
+6. 如果重新生成了 smoke_run，想让页面显示最新结果：
+   python ..\\..\\scripts\\refresh_report_payload.py
+7. 如果要检查任务规模在 48GB 预算下是否成立：
+   python ..\\..\\scripts\\check_4090_feasibility.py --shape-a 3000,1500,2000 --shape-b 3000,1500,2000
 """
 
 
@@ -234,92 +401,432 @@ def _presentation_checklist_text() -> str:
 """
 
 
-def _report_index_html_text() -> str:
+def render_report_index_html(payload: dict | None = None) -> str:
+    embedded_payload = json.dumps(payload, ensure_ascii=False) if payload is not None else "null"
     return """<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>OCT 真实任务工程汇报</title>
+  <title>OCT 图形化数据页面</title>
   <style>
     :root {
-      --bg: #07110f;
-      --panel: #10221d;
-      --ink: #e9fff7;
-      --muted: #9fc8ba;
-      --accent: #7bf0b2;
-      --warn: #ffd166;
-      --line: rgba(123, 240, 178, 0.22);
+      --bg: #050913;
+      --panel: rgba(6, 12, 24, 0.85);
+      --card: rgba(13, 26, 44, 0.6);
+      --ink: #d9f4ff;
+      --muted: #9cc3d6;
+      --line: rgba(120, 220, 255, 0.18);
+      --accent: #51d6ff;
     }
     body {
       margin: 0;
-      font-family: Georgia, "Times New Roman", "Noto Serif SC", serif;
-      background:
-        radial-gradient(circle at 20% 0%, rgba(123, 240, 178, 0.18), transparent 34%),
-        linear-gradient(135deg, #06100e 0%, #0b1714 46%, #020504 100%);
+      font-family: "Segoe UI", sans-serif;
+      background: radial-gradient(circle at top, #10223d 0%, #050913 50%, #02040a 100%);
       color: var(--ink);
+      overflow: hidden;
     }
-    main { max-width: 1120px; margin: 0 auto; padding: 56px 24px; }
+    .layout {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      height: 100vh;
+    }
     .hero {
-      border: 1px solid var(--line);
-      border-radius: 28px;
-      padding: 40px;
-      background: rgba(16, 34, 29, 0.78);
-      box-shadow: 0 24px 80px rgba(0,0,0,0.35);
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      padding: 18px;
     }
-    h1 { font-size: clamp(34px, 6vw, 72px); line-height: 0.95; margin: 0 0 18px; }
-    h2 { margin: 0 0 16px; font-size: 26px; }
-    p { color: var(--muted); font-size: 18px; line-height: 1.65; }
-    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 24px; }
+    .hero canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    .panel {
+      padding: 24px;
+      background: var(--panel);
+      border-left: 1px solid var(--line);
+      overflow: auto;
+      backdrop-filter: blur(12px);
+    }
+    h1 { margin-top: 0; font-size: 28px; }
+    h2 { margin: 0 0 14px; font-size: 22px; }
+    p { color: var(--muted); font-size: 16px; line-height: 1.6; }
     .card {
+      margin-bottom: 18px;
+      padding: 14px 16px;
       border: 1px solid var(--line);
-      border-radius: 20px;
-      padding: 22px;
-      background: rgba(255,255,255,0.035);
+      border-radius: 14px;
+      background: var(--card);
     }
-    .metric { font-size: 34px; color: var(--accent); font-weight: 700; }
-    .warn { color: var(--warn); }
-    code { color: var(--accent); }
-    ol, ul { color: var(--muted); font-size: 17px; line-height: 1.65; padding-left: 22px; }
-    section { margin-top: 26px; }
-    @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } .hero { padding: 26px; } }
+    .slice-stage {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 4 / 3;
+      overflow: hidden;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: rgba(0,0,0,0.18);
+      cursor: grab;
+    }
+    .slice-stage:active { cursor: grabbing; }
+    .slice-canvas { width: 100%; height: 100%; display: block; image-rendering: pixelated; }
+    .toolbar {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+    .toolbar input[type="range"] { width: 160px; accent-color: var(--accent); }
+    .toolbar button {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(255,255,255,0.05);
+      color: var(--ink);
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+    .toolbar label {
+      color: var(--muted);
+      font-size: 15px;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .legend-swatch {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    .small { font-size: 14px; color: var(--muted); }
+    .status-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    @media (max-width: 900px) {
+      .layout { grid-template-columns: 1fr; height: auto; }
+      .hero { min-height: 360px; }
+    }
   </style>
 </head>
 <body>
-  <main>
+  <div class="layout">
     <div class="hero">
-      <h1>OCT 三维体真实拼接任务</h1>
-      <p>目标不是继续演示小 demo，而是处理真实工程约束：大体数据、48GB 显存预算、overlap 非固定先验、按 brick 流式输出，以及可复现实测 benchmark。当前已经补上显存规划器，并在本机 CUDA 环境下跑通了 torch FFT 全局配准主干。</p>
-      <div class="grid">
-        <div class="card"><div class="metric">36GB</div><p>单个 `3000 x 1500 x 2000` float32 体约占用。</p></div>
-        <div class="card"><div class="metric">48GB</div><p>目标单卡显存预算，不能容纳两个完整 float32 体和输出。</p></div>
-        <div class="card"><div class="metric">~10%</div><p>overlap 只是先验范围中心，实际值由算法估计。</p></div>
+      <canvas id="scene"></canvas>
+    </div>
+    <div class="panel">
+      <h1>OCT 图形化数据页面</h1>
+      <div class="toolbar">
+        <label>View
+          <select id="viewMode">
+            <option value="stitched">Stitched</option>
+            <option value="volume_a">Volume A</option>
+            <option value="volume_b">Volume B</option>
+          </select>
+        </label>
+        <button id="resetView">Reset View</button>
+        <label>Slice <input id="sliceSlider" type="range" min="0" max="0" value="0"></label>
+        <label>Zoom <input id="zoomSlider" type="range" min="100" max="400" value="100"></label>
+        <label>Point Size <input id="pointSize" type="range" min="1" max="8" value="2"></label>
+      </div>
+      <div class="card"><strong>Algorithm Output</strong><div id="summary">Loading summary...</div></div>
+      <div class="card"><strong>Structure Legend</strong><div id="legend"></div></div>
+      <div class="card">
+        <strong>Slice View</strong>
+        <div class="slice-stage" id="sliceStage" style="margin-top:12px;">
+          <canvas id="sliceCanvas" class="slice-canvas"></canvas>
+        </div>
+        <div class="small" id="sliceInfo" style="margin-top:10px;">Loading smoke_run...</div>
+      </div>
+      <div class="card">
+        <strong>Current Algorithm</strong>
+        <ul>
+          <li>输入通过 memmap 分块读取。</li>
+          <li>MemoryPlanner 负责 slab 预算。</li>
+          <li>overlap 在 5% 到 20% 范围内估计。</li>
+          <li>全局配准主干可走 torch FFT CUDA。</li>
+          <li>输出按 brick 流式写盘。</li>
+        </ul>
       </div>
     </div>
-    <section class="grid">
-      <div class="card"><h2>内存策略</h2><p>输入体用 memmap 分块读取，新增 MemoryPlanner 按 48GB 预算规划 slab，融合阶段按输出 brick 拉取局部区域，不创建完整 stitched float32 体。</p></div>
-      <div class="card"><h2>配准主干</h2><p>默认在 5% 到 20% 范围内低分辨搜索 overlap，并已补上基于 torch FFT 的 axis=0 全局配准接口。在本机的 CUDA 环境中已验证可运行，同时保留 CPU fallback。</p></div>
-      <div class="card"><h2>真实 Benchmark</h2><p>benchmark 会实际读取 stitched bricks 并组装切片，报告 disk_reads、mean_slice_ms、estimated_fps。</p></div>
-    </section>
-    <section class="card">
-      <h2>演示命令</h2>
-      <p>先运行烟测验证包独立可用：</p>
-      <code>scripts\\run_smoke_test.bat</code>
-      <p>替换真实数据后运行：</p>
-      <code>python scripts\\run_real_pipeline.py --volume-a real_data\\volume_a.npy --volume-b real_data\\volume_b.npy --output-dir real_run</code>
-    </section>
-    <section class="card">
-      <h2>当前边界</h2>
-      <ul>
-        <li>第一阶段实现 axis=0 平移配准、MemoryPlanner、torch FFT 全局配准主干和 streaming brick fusion。</li>
-        <li>旋转、尺度误差、非刚性形变、GPU kernel 与最终 30 Hz 渲染器是下一阶段。</li>
-        <li>当前 FPS 是 I/O 与切片组装基线，不等同于最终显示帧率。</li>
-      </ul>
-    </section>
-  </main>
+  </div>
+  <script>
+    const payload = __EMBEDDED_PAYLOAD__;
+    const summaryNode = document.getElementById('summary');
+    const legend = document.getElementById('legend');
+    const sliceInfo = document.getElementById('sliceInfo');
+    const sliceStage = document.getElementById('sliceStage');
+    const sliceCanvas = document.getElementById('sliceCanvas');
+    const sliceCtx = sliceCanvas.getContext('2d');
+    const scene = document.getElementById('scene');
+    const sceneCtx = scene.getContext('2d');
+    const resetView = document.getElementById('resetView');
+    const sliceSlider = document.getElementById('sliceSlider');
+    const zoomSlider = document.getElementById('zoomSlider');
+    const pointSizeInput = document.getElementById('pointSize');
+    const viewMode = document.getElementById('viewMode');
+
+    let summary = null;
+    let slices = [];
+    let pointClouds = {};
+    let currentSlice = 0;
+    let zoom = 1;
+    let panX = 0;
+    let panY = 0;
+    let rotY = 0.7;
+    let rotX = -0.4;
+    let dragging = false;
+    let dragStartX = 0;
+    let dragStartY = 0;
+    let sceneDragging = false;
+    let sceneStartX = 0;
+    let sceneStartY = 0;
+    let frameTick = 0;
+
+    function resizeCanvas() {
+      sliceCanvas.width = sliceStage.clientWidth;
+      sliceCanvas.height = sliceStage.clientHeight;
+      scene.width = scene.clientWidth;
+      scene.height = scene.clientHeight;
+    }
+
+    async function boot() {
+      resizeCanvas();
+      if (!payload) {
+        summaryNode.textContent = 'No embedded report payload found.';
+        return;
+      }
+      summary = payload.summary;
+      slices = payload.slices;
+      pointClouds = payload.point_clouds || {};
+      sliceSlider.max = String(slices.length - 1);
+      updateSummary();
+      updateLegend();
+      await drawSlice(0);
+      requestAnimationFrame(loop);
+    }
+
+    function updateSummary() {
+      summaryNode.innerHTML = `
+        <div>Registration mode: ${summary.registration.mode}</div>
+        <div>Fusion mode: ${summary.fusion.mode}</div>
+        <div>Overlap voxels: ${summary.estimated_overlap_voxels}</div>
+        <div>Brick count: ${summary.brick_count}</div>
+        <div>Slice FPS baseline: ${summary.benchmark.estimated_fps.toFixed(2)}</div>
+        <div>Planned slab: ${summary.memory_budget.planned_slab_shape.join(' x ')}</div>
+        <div>GPU budget: ${(summary.memory_budget.max_gpu_bytes / (1024 ** 3)).toFixed(1)} GB</div>
+      `;
+    }
+
+    function currentPointCloud() {
+      return pointClouds[viewMode.value];
+    }
+
+    function updateLegend() {
+      const cloud = currentPointCloud();
+      if (!cloud) {
+        legend.innerHTML = '<div class="small">No point cloud loaded.</div>';
+        return;
+      }
+      legend.innerHTML = cloud.legend.map(item => `
+        <div class="legend-item">
+          <span class="legend-swatch" style="background:${item.color}"></span>
+          <span>${item.label}</span>
+        </div>
+      `).join('');
+    }
+
+    async function drawSlice(index) {
+      currentSlice = index;
+      sliceSlider.value = String(index);
+      const slice = slices[index];
+      const [height, width] = slice.shape;
+      const image = sliceCtx.createImageData(width, height);
+      for (let i = 0; i < slice.data.length; i++) {
+        const value = slice.data[i];
+        const idx = i * 4;
+        image.data[idx] = value;
+        image.data[idx + 1] = value;
+        image.data[idx + 2] = Math.min(255, value + 28);
+        image.data[idx + 3] = 255;
+      }
+      const offscreen = document.createElement('canvas');
+      offscreen.width = width;
+      offscreen.height = height;
+      offscreen.getContext('2d').putImageData(image, 0, 0);
+
+      sliceCtx.clearRect(0, 0, sliceCanvas.width, sliceCanvas.height);
+      const drawWidth = sliceCanvas.width * zoom;
+      const drawHeight = sliceCanvas.height * zoom;
+      sliceCtx.save();
+      sliceCtx.translate(panX, panY);
+      sliceCtx.drawImage(offscreen, 0, 0, drawWidth, drawHeight);
+      sliceCtx.restore();
+
+      sliceInfo.textContent = `Slice ${index + 1}/${slices.length} | zoom ${zoom.toFixed(2)}x | pan (${Math.round(panX)}, ${Math.round(panY)})`;
+    }
+
+    function rotatePoint(point) {
+      const cloud = currentPointCloud();
+      const [x, y, z] = point;
+      const cx = cloud.shape[0] / 2;
+      const cy = cloud.shape[1] / 2;
+      const cz = cloud.shape[2] / 2;
+      let px = x - cx;
+      let py = y - cy;
+      let pz = z - cz;
+
+      const cosy = Math.cos(rotY), siny = Math.sin(rotY);
+      const cosx = Math.cos(rotX), sinx = Math.sin(rotX);
+      let x1 = px * cosy - pz * siny;
+      let z1 = px * siny + pz * cosy;
+      let y1 = py * cosx - z1 * sinx;
+      let z2 = py * sinx + z1 * cosx;
+      return [x1, y1, z2];
+    }
+
+    function projectPoint(rotated, zoomFactor) {
+      const cloud = currentPointCloud();
+      const maxDim = Math.max(cloud.shape[0], cloud.shape[1], cloud.shape[2]);
+      const perspective = 1.0 / (1.0 + rotated[2] / (maxDim * 1.4));
+      const sx = scene.width / 2 + rotated[0] * zoomFactor * perspective * 6.0;
+      const sy = scene.height / 2 + rotated[1] * zoomFactor * perspective * 6.0;
+      return [sx, sy, perspective];
+    }
+
+    function colorForLabel(label, fallback) {
+      const colors = {
+        'Low Response': '#2a6f97',
+        'Medium Response': '#51d6ff',
+        'High Response': '#ffe66d',
+        'A-only': '#51d6ff',
+        'B-only': '#ff9a4d',
+        'Overlap': '#f6ff7e',
+      };
+      return colors[label] || fallback;
+    }
+
+    function loop() {
+      frameTick += 1;
+      sceneCtx.clearRect(0, 0, scene.width, scene.height);
+      const cloud = currentPointCloud();
+      if (cloud) {
+        const zoomFactor = Number(zoomSlider.value) / 100;
+        const baseSize = Number(pointSizeInput.value);
+        for (let i = 0; i < cloud.points.length; i++) {
+          const rotated = rotatePoint(cloud.points[i]);
+          const [sx, sy, scale] = projectPoint(rotated, zoomFactor);
+          const size = Math.max(0.5, baseSize * scale * 2.0);
+          const intensity = cloud.values[i];
+          const alpha = Math.min(0.95, 0.15 + intensity * 0.85);
+          const color = colorForLabel(cloud.labels[i], cloud.color || '#7bf0b2');
+          const r = parseInt(color.slice(1, 3), 16);
+          const g = parseInt(color.slice(3, 5), 16);
+          const b = parseInt(color.slice(5, 7), 16);
+          sceneCtx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha})`;
+          sceneCtx.beginPath();
+          sceneCtx.arc(sx, sy, size, 0, Math.PI * 2);
+          sceneCtx.fill();
+        }
+      }
+      requestAnimationFrame(loop);
+    }
+
+    resetView.addEventListener('click', () => {
+      zoom = 1;
+      panX = 0;
+      panY = 0;
+      rotX = -0.4;
+      rotY = 0.7;
+      zoomSlider.value = '100';
+      drawSlice(currentSlice);
+    });
+
+    sliceSlider.addEventListener('input', () => {
+      drawSlice(Number(sliceSlider.value));
+    });
+
+    zoomSlider.addEventListener('input', () => {
+      zoom = Number(zoomSlider.value) / 100;
+      drawSlice(currentSlice);
+    });
+
+    viewMode.addEventListener('change', () => {
+      updateLegend();
+    });
+
+    sliceStage.addEventListener('mousedown', (event) => {
+      dragging = true;
+      dragStartX = event.clientX - panX;
+      dragStartY = event.clientY - panY;
+    });
+
+    window.addEventListener('mouseup', () => {
+      dragging = false;
+    });
+
+    window.addEventListener('mousemove', (event) => {
+      if (!dragging) return;
+      panX = event.clientX - dragStartX;
+      panY = event.clientY - dragStartY;
+      drawSlice(currentSlice);
+    });
+
+    sliceStage.addEventListener('wheel', (event) => {
+      event.preventDefault();
+      const current = Number(zoomSlider.value);
+      const next = Math.max(100, Math.min(400, current - event.deltaY * 0.05));
+      zoomSlider.value = String(next);
+      zoom = next / 100;
+      drawSlice(currentSlice);
+    }, { passive: false });
+
+    scene.addEventListener('mousedown', (event) => {
+      sceneDragging = true;
+      sceneStartX = event.clientX;
+      sceneStartY = event.clientY;
+    });
+
+    scene.addEventListener('wheel', (event) => {
+      event.preventDefault();
+      const current = Number(zoomSlider.value);
+      const next = Math.max(100, Math.min(400, current - event.deltaY * 0.05));
+      zoomSlider.value = String(next);
+      zoom = next / 100;
+    }, { passive: false });
+
+    window.addEventListener('mouseup', () => {
+      sceneDragging = false;
+    });
+
+    window.addEventListener('mousemove', (event) => {
+      if (!sceneDragging) return;
+      const dx = event.clientX - sceneStartX;
+      const dy = event.clientY - sceneStartY;
+      rotY += dx * 0.01;
+      rotX += dy * 0.01;
+      sceneStartX = event.clientX;
+      sceneStartY = event.clientY;
+    });
+
+    window.addEventListener('resize', () => {
+      resizeCanvas();
+      drawSlice(currentSlice);
+    });
+
+    boot();
+  </script>
 </body>
 </html>
-"""
+""".replace("__EMBEDDED_PAYLOAD__", embedded_payload)
 
 
 def _run_commands_text() -> str:
