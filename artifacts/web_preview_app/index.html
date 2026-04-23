@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OCT Merge Task Preview</title>
+  <style>
+    body {
+      margin: 0;
+      background: radial-gradient(circle at top, #10223d 0%, #050913 50%, #02040a 100%);
+      color: #d9f4ff;
+      font-family: "Segoe UI", sans-serif;
+      overflow: hidden;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      height: 100vh;
+    }
+    .hero {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    .panel {
+      padding: 24px;
+      background: rgba(6, 12, 24, 0.85);
+      border-left: 1px solid rgba(120, 220, 255, 0.18);
+      overflow: auto;
+      backdrop-filter: blur(12px);
+    }
+    h1 { margin-top: 0; font-size: 28px; }
+    .card {
+      margin-bottom: 18px;
+      padding: 14px 16px;
+      border: 1px solid rgba(120, 220, 255, 0.18);
+      border-radius: 14px;
+      background: rgba(13, 26, 44, 0.6);
+    }
+    .slice {
+      width: 100%;
+      border-radius: 10px;
+      image-rendering: pixelated;
+      border: 1px solid rgba(120, 220, 255, 0.2);
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <div class="hero">
+      <canvas id="scene"></canvas>
+    </div>
+    <div class="panel">
+      <h1>OCT Merge Task Preview</h1>
+      <div class="card"><strong>Algorithm Output</strong><div id="summary"></div></div>
+      <div class="card"><strong>Axial Slice</strong><canvas id="slice" class="slice"></canvas></div>
+      <div class="card"><strong>Notes</strong><div>Current browser layer is driven by the new task-focused project payload.</div></div>
+    </div>
+  </div>
+  <script>
+    const summary = document.getElementById('summary');
+    const scene = document.getElementById('scene');
+    const sceneCtx = scene.getContext('2d');
+    const sliceCanvas = document.getElementById('slice');
+    const sliceCtx = sliceCanvas.getContext('2d');
+    let payload = null;
+    let angle = 0;
+
+    function resize() {
+      scene.width = scene.clientWidth;
+      scene.height = scene.clientHeight;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    fetch('./payload.json')
+      .then(r => r.json())
+      .then(data => {
+        payload = data;
+        summary.innerHTML = `
+          <div>Preview shape: ${data.preview_shape.join(' x ')}</div>
+          <div>Stitched shape: ${data.stitched_shape.join(' x ')}</div>
+          <div>Transform tx: ${data.transform.tx}</div>
+          <div>Brick count: ${data.brick_count}</div>
+          <div>Estimated FPS: ${data.benchmark.estimated_fps.toFixed(2)}</div>
+        `;
+        drawSlice(data.slices.axial_mid);
+        requestAnimationFrame(loop);
+      });
+
+    function drawSlice(slice) {
+      const [h, w] = slice.shape;
+      sliceCanvas.width = w;
+      sliceCanvas.height = h;
+      const imageData = sliceCtx.createImageData(w, h);
+      for (let i = 0; i < slice.data.length; i++) {
+        const value = slice.data[i];
+        const idx = i * 4;
+        imageData.data[idx] = value;
+        imageData.data[idx + 1] = value;
+        imageData.data[idx + 2] = Math.min(255, value + 40);
+        imageData.data[idx + 3] = 255;
+      }
+      sliceCtx.putImageData(imageData, 0, 0);
+    }
+
+    function loop() {
+      angle += 0.01;
+      sceneCtx.clearRect(0, 0, scene.width, scene.height);
+      const cx = scene.width / 2;
+      const cy = scene.height / 2;
+      for (let i = 0; i < 800; i++) {
+        const t = i / 800 * Math.PI * 8;
+        const radius = 60 + (i % 40) * 2;
+        const x = cx + Math.cos(t + angle) * radius;
+        const y = cy + Math.sin(t * 0.8 + angle * 1.3) * radius * 0.5;
+        const size = 1 + (i % 5);
+        const alpha = 0.05 + (i % 10) * 0.02;
+        sceneCtx.fillStyle = `rgba(90, 220, 255, ${alpha})`;
+        sceneCtx.beginPath();
+        sceneCtx.arc(x, y, size, 0, Math.PI * 2);
+        sceneCtx.fill();
+      }
+      requestAnimationFrame(loop);
+    }
+  </script>
+</body>
+</html>

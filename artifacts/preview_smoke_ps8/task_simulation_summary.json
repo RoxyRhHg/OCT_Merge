@@ -1,0 +1,41 @@
+{
+  "preview_shape": [
+    187,
+    93,
+    125
+  ],
+  "preview_run": {
+    "input_shape": [
+      187,
+      93,
+      125
+    ],
+    "stitched_shape": [
+      356,
+      93,
+      125
+    ],
+    "estimated_transform": {
+      "tx": 18.0,
+      "ty": 0.0,
+      "tz": 0.0,
+      "rx": 0.0,
+      "ry": 0.0,
+      "rz": 0.0
+    },
+    "brick_count": 8640
+  },
+  "benchmark": {
+    "axis": 2,
+    "passes": 1,
+    "num_slices": 125,
+    "mean_slice_ms": 0.10005440000006731,
+    "estimated_fps": 9994.56295774426,
+    "cache_info": {
+      "cache_size": 0,
+      "resident_bricks": 0,
+      "disk_reads": 0
+    }
+  },
+  "output_dir": "E:\\Coding\\OCT Merge Task\\artifacts\\preview_smoke_ps8"
+}

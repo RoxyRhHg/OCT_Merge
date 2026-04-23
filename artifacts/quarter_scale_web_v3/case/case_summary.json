@@ -1,0 +1,45 @@
+{
+  "volume_shape": [
+    750,
+    375,
+    500
+  ],
+  "shape_a": [
+    750,
+    375,
+    500
+  ],
+  "shape_b": [
+    750,
+    375,
+    500
+  ],
+  "overlap_voxels": 75,
+  "overlap_ratio": 0.1,
+  "preview_step": 8,
+  "preview_shape": [
+    93,
+    46,
+    62
+  ],
+  "preview_overlap_voxels": 9,
+  "preview_overlap_ratio": 0.0967741935483871,
+  "world_shape": [
+    1425,
+    375,
+    500
+  ],
+  "preview_world_shape": [
+    177,
+    46,
+    62
+  ],
+  "same_size_pair": true,
+  "rotation_deg": -4.0,
+  "local_shift": 2,
+  "signal_components": 6,
+  "full_volume_a_path": "E:\\Coding\\OCT Merge Task\\artifacts\\quarter_scale_web_v3\\case\\volume_a.npy",
+  "full_volume_b_path": "E:\\Coding\\OCT Merge Task\\artifacts\\quarter_scale_web_v3\\case\\volume_b.npy",
+  "preview_volume_a_path": "E:\\Coding\\OCT Merge Task\\artifacts\\quarter_scale_web_v3\\case\\preview_volume_a.npy",
+  "preview_volume_b_path": "E:\\Coding\\OCT Merge Task\\artifacts\\quarter_scale_web_v3\\case\\preview_volume_b.npy"
+}

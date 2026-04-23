@@ -1,0 +1,18 @@
+{
+  "volume_shape": [
+    750,
+    375,
+    500
+  ],
+  "overlap_voxels": 75,
+  "preview_step": 8,
+  "preview_shape": [
+    93,
+    46,
+    62
+  ],
+  "full_volume_a_path": "E:\\Coding\\OCT Merge Task\\artifacts\\quarter_scale_web\\case\\volume_a.npy",
+  "full_volume_b_path": "E:\\Coding\\OCT Merge Task\\artifacts\\quarter_scale_web\\case\\volume_b.npy",
+  "preview_volume_a_path": "E:\\Coding\\OCT Merge Task\\artifacts\\quarter_scale_web\\case\\preview_volume_a.npy",
+  "preview_volume_b_path": "E:\\Coding\\OCT Merge Task\\artifacts\\quarter_scale_web\\case\\preview_volume_b.npy"
+}

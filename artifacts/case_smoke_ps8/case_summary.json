@@ -1,0 +1,18 @@
+{
+  "volume_shape": [
+    1500,
+    750,
+    1000
+  ],
+  "overlap_voxels": 150,
+  "preview_step": 8,
+  "preview_shape": [
+    187,
+    93,
+    125
+  ],
+  "full_volume_a_path": "E:\\Coding\\OCT Merge Task\\artifacts\\case_smoke_ps8\\volume_a.npy",
+  "full_volume_b_path": "E:\\Coding\\OCT Merge Task\\artifacts\\case_smoke_ps8\\volume_b.npy",
+  "preview_volume_a_path": "E:\\Coding\\OCT Merge Task\\artifacts\\case_smoke_ps8\\preview_volume_a.npy",
+  "preview_volume_b_path": "E:\\Coding\\OCT Merge Task\\artifacts\\case_smoke_ps8\\preview_volume_b.npy"
+}

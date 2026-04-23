@@ -1,0 +1,37 @@
+{
+  "brick_store_dir": "E:\\Coding\\OCT Merge Task\\artifacts\\preview_smoke_ps8\\preview_run\\stitched_bricks",
+  "runs": [
+    {
+      "axis": 2,
+      "passes": 1,
+      "num_slices": 125,
+      "mean_slice_ms": 0.10005520000000029,
+      "estimated_fps": 9994.483045358933,
+      "cache_info": {
+        "cache_size": 0,
+        "resident_bricks": 0,
+        "disk_reads": 0
+      },
+      "configuration": {
+        "axis": 2,
+        "passes": 1
+      }
+    },
+    {
+      "axis": 1,
+      "passes": 1,
+      "num_slices": 93,
+      "mean_slice_ms": 0.10006129032258063,
+      "estimated_fps": 9993.874721944616,
+      "cache_info": {
+        "cache_size": 0,
+        "resident_bricks": 0,
+        "disk_reads": 0
+      },
+      "configuration": {
+        "axis": 1,
+        "passes": 1
+      }
+    }
+  ]
+}

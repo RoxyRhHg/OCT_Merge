@@ -1,0 +1,63 @@
+{
+  "shape_a": [
+    24,
+    12,
+    8
+  ],
+  "shape_b": [
+    21,
+    12,
+    8
+  ],
+  "dtype_a": "uint16",
+  "dtype_b": "uint16",
+  "estimated_overlap_voxels": 3,
+  "estimated_overlap_fraction": 0.125,
+  "overlap_fraction_range": [
+    0.05,
+    0.2
+  ],
+  "estimated_transform": {
+    "tx": 21,
+    "ty": 0,
+    "tz": 0,
+    "rx": 0.0,
+    "ry": 0.0,
+    "rz": 0.0,
+    "score": 1.0
+  },
+  "stitched_shape": [
+    42,
+    12,
+    8
+  ],
+  "brick_count": 24,
+  "brick_size": [
+    7,
+    6,
+    5
+  ],
+  "memory_policy": {
+    "loads_full_volume": false,
+    "source_access": "memmap",
+    "fusion": "streaming_bricks",
+    "preview_stride": [
+      1,
+      1,
+      1
+    ]
+  },
+  "benchmark": {
+    "axis": 2,
+    "passes": 1,
+    "num_slices": 8,
+    "mean_slice_ms": 4.091674999999983,
+    "estimated_fps": 244.39868757904873,
+    "cache_info": {
+      "cache_size": 0,
+      "resident_bricks": 0,
+      "disk_reads": 96
+    }
+  },
+  "output_dir": "artifacts\\real_pipeline_smoke"
+}

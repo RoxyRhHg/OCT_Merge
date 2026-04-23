@@ -1,0 +1,16 @@
+{
+  "bundle_type": "real_task_oct_merge",
+  "bundle_dir": "E:\\Coding\\OCT Merge Task\\report_bundle\\real_task_oct_merge_bundle",
+  "src_dir": "E:\\Coding\\OCT Merge Task\\report_bundle\\real_task_oct_merge_bundle\\src",
+  "scripts_dir": "E:\\Coding\\OCT Merge Task\\report_bundle\\real_task_oct_merge_bundle\\scripts",
+  "docs_dir": "E:\\Coding\\OCT Merge Task\\report_bundle\\real_task_oct_merge_bundle\\docs",
+  "report_dir": "E:\\Coding\\OCT Merge Task\\report_bundle\\real_task_oct_merge_bundle\\report",
+  "real_data_dir": "E:\\Coding\\OCT Merge Task\\report_bundle\\real_task_oct_merge_bundle\\real_data",
+  "includes_smoke_data": true,
+  "entrypoints": {
+    "inspect_volume": "scripts/read_input_volume.py",
+    "run_real_pipeline": "scripts/run_real_pipeline.py",
+    "smoke_test": "scripts/run_smoke_test.bat",
+    "open_report": "scripts/open_report.bat"
+  }
+}

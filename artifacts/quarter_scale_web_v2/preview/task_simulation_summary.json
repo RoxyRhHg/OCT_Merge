@@ -1,0 +1,41 @@
+{
+  "preview_shape": [
+    93,
+    46,
+    62
+  ],
+  "preview_run": {
+    "input_shape": [
+      93,
+      46,
+      62
+    ],
+    "stitched_shape": [
+      102,
+      46,
+      62
+    ],
+    "estimated_transform": {
+      "tx": 84.0,
+      "ty": 0.0,
+      "tz": 0.0,
+      "rx": 0.0,
+      "ry": 0.0,
+      "rz": 0.0
+    },
+    "brick_count": 624
+  },
+  "benchmark": {
+    "axis": 2,
+    "passes": 1,
+    "num_slices": 62,
+    "mean_slice_ms": 0.10005161290324158,
+    "estimated_fps": 9994.841372193421,
+    "cache_info": {
+      "cache_size": 0,
+      "resident_bricks": 0,
+      "disk_reads": 0
+    }
+  },
+  "output_dir": "E:\\Coding\\OCT Merge Task\\artifacts\\quarter_scale_web_v2\\preview"
+}
